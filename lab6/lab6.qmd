@@ -1,0 +1,213 @@
+---
+title: "PM566 Lab6"
+author: "Weixi Pan"
+format:
+  html:
+    embed-resources: true
+---
+
+## Set up
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyverse)
+library(tidytext)
+library(ggplot2)
+library(forcats)
+```
+
+## Read the data
+
+```{r read-data,cache=TRUE}
+if (!file.exists("mtsamples.csv")){
+  download.file(
+    url = "https://raw.githubusercontent.com/USCbiostats/data-science-data/master/00_mtsamples/mtsamples.csv",
+    destfile = "mtsamples.csv",
+    method   = "libcurl",
+    timeout  = 60
+  )}
+
+mts <- read.csv("mtsamples.csv")
+str(mts)
+
+mts <- as_tibble(mts)
+```
+
+## Question 1: What specialties do we have?
+
+We can use count() from dplyr to figure out how many different catagories do we have? Are these catagories related? overlapping? evenly distributed?
+
+```{r}
+spec <- mts %>%
+  count(medical_specialty)
+
+spec %>%
+  arrange(desc(n)) %>%
+  knitr::kable()
+
+length(unique(mts$medical_specialty))
+```
+
+There are `r nrow(spec)` medical specialties.
+
+```{r}
+spec %>%
+  top_n(10,n)%>%
+  ggplot(aes(x=n,y=fct_reorder(medical_specialty,n)))+
+  geom_col()
+```
+
+## **Question 2**
+
+-   Tokenize the the words in the `transcription` column
+
+-   Count the number of times each token appears
+
+-   Visualize the top 20 most frequent words
+
+Explain what we see from this result. Does it makes sense? What insights (if any) do we get?
+
+```{r cache=TRUE}
+mts %>%
+  unnest_tokens(token, transcription) %>%
+  count(token,sort = TRUE)
+
+## visualization
+mts %>%
+  unnest_tokens(word, transcription) %>%
+  count(word) %>%
+  top_n(20,n) %>%
+  ggplot(aes(x=n,y=fct_reorder(word,n)))+
+  geom_col()
+```
+
+Too much stopwords without meaningful medical words.
+
+## **Question 3**
+
+-   Redo visualization but remove stopwords before
+
+-   Bonus points if you remove numbers as well
+
+What do we see know that we have removed stop words? Does it give us a better idea of what the text is about?
+
+```{r cache=TRUE}
+mts %>%
+  unnest_tokens(word, transcription) %>%
+  anti_join(stop_words, by = "word") %>%
+  count(word) %>%
+  top_n(20,n) %>%
+  ggplot(aes(x=n,y=fct_reorder(word,n)))+
+  geom_col()
+```
+
+```{r}
+mts %>%
+  unnest_tokens(word, transcription) %>%
+  anti_join(stop_words, by = "word") %>%
+  
+  # use regular expression to filter out numbers
+  filter(!grepl(pattern = '^[0-9]+$',x=word))%>%
+  count(word) %>%
+  top_n(20,n) %>%
+  ggplot(aes(x=n,y=fct_reorder(word,n)))+
+  geom_col()
+```
+
+# Question 4
+
+repeat question 2, but this time tokenize into bi-grams. how does the result change if you look at tri-grams?
+
+```{r}
+# Bigrams
+mts %>%
+  unnest_ngrams(bigram, transcription, n = 2) %>%
+  count(bigram) %>%
+  top_n(20,n) %>%
+  ggplot(aes(x=n,y=fct_reorder(bigram,n)))+
+  geom_col()
+```
+
+```{r}
+# Trigrams
+mts %>%
+  unnest_ngrams(trigram, transcription, n = 3) %>%
+  count(trigram) %>%
+  top_n(20,n) %>%
+  ggplot(aes(x=n,y=fct_reorder(trigram,n)))+
+  geom_col()
+```
+
+Tri-grams seem like having more medical text than bi-grams.
+
+# **Question 5**
+
+Using the results you got from questions 4. Pick a word and count the words that appears after and before it.
+
+```{r cache=TRUE}
+ptbigram <- mts %>%
+  unnest_ngrams(bigram, transcription, n = 2) %>%
+  separate(bigram, into = c("word1", "word2"), sep = " ") %>%
+  select(word1, word2) %>%
+  filter(word1=='patient'|word2=='patient')
+```
+
+before:
+
+```{r cache=TRUE}
+ptbigram %>%
+  filter(word2=='patient') %>%
+  count(word1, sort = TRUE) %>%
+  anti_join(stop_words,by=c('word1'='word'))%>%
+  top_n(10) %>%
+  knitr::kable()
+```
+
+after
+
+```{r cache=TRUE}
+ptbigram %>%
+  filter(word1=='patient') %>%
+  count(word2, sort = TRUE) %>%
+  anti_join(stop_words,by=c('word2'='word'))%>%
+  top_n(10)%>%
+  knitr::kable()
+```
+
+# Question 6
+
+Which words are most used in each of the specialties. you can use group_by() and top_n() from dplyr to have the calculations be done within each specialty. Remember to remove stopwords. How about the most 5 used words?
+
+```{r}
+mts %>%
+  unnest_tokens(word, transcription) %>%
+  group_by(medical_specialty)%>%
+  count(word,sort=TRUE) %>%
+  
+  # use regular expression to filter out numbers
+  filter(!(word %in% stop_words$word) & !grepl(pattern = '^[0-9]+$',x=word))%>%
+  top_n(5,n) %>%
+  arrange(medical_specialty,desc(n)) %>%
+  knitr::kable()
+```
+
+# **Question 7 - extra**
+
+Find your own insight in the data:
+
+Ideas:
+
+-   Interesting ngrams
+
+-   See if certain words are used more in some specialties then others
+
+```{r}
+mts %>%
+  unnest_tokens(word, transcription) %>%
+  count(word,medical_specialty, sort = TRUE)%>%
+   filter(!(word %in% stop_words$word) & !grepl(pattern = '^[0-9]+$',x=word))%>%
+   bind_tf_idf(word, medical_specialty, n) %>%
+  arrange(desc(tf_idf))
+
+```
